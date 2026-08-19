@@ -44,6 +44,9 @@ model = dict(
         pdnorm_adaptive=False,
         pdnorm_affine=True,
         pdnorm_conditions=("ScanNet", "S3DIS", "Structured3D"),
+        #==========================================================
+        enable_gct=False,         # برای تست Base (بدون ماژول) این را False کنید
+        gct_num_anchors=4,       # تنظیم تعداد لنگرهای معنایی (تست مقادیر 2, 4, 8)
     ),
     criteria=[
         dict(type="CrossEntropyLoss", loss_weight=1.0, ignore_index=-1),
