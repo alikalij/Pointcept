@@ -25,6 +25,7 @@ from pointcept.models.utils.misc import offset2bincount
 from pointcept.models.utils.structure import Point
 from pointcept.models.modules import PointModule, PointSequential
 
+import pointcept.models.point_transformer_v3.new_modules as modules
 
 class RPE(torch.nn.Module):
     def __init__(self, patch_size, num_heads):
@@ -63,6 +64,10 @@ class SerializedAttention(PointModule):
         enable_flash=True,
         upcast_attention=True,
         upcast_softmax=True,
+        #===================================
+        enable_spe=False, 
+        spe_dim=None,
+
     ):
         super().__init__()
         assert channels % num_heads == 0
@@ -95,7 +100,15 @@ class SerializedAttention(PointModule):
             self.patch_size_max = patch_size
             self.patch_size = 0
             self.attn_drop = torch.nn.Dropout(attn_drop)
-
+        #=========================================================
+        if enable_spe:
+            self.spe = modules.SerializationPositionalEncoding(
+                channels=spe_dim,
+                hidden_dim=spe_dim
+            )
+        else:
+            self.spe = None
+            
         self.qkv = torch.nn.Linear(channels, channels * 3, bias=qkv_bias)
         self.proj = torch.nn.Linear(channels, channels)
         self.proj_drop = torch.nn.Dropout(proj_drop)
@@ -184,6 +197,12 @@ class SerializedAttention(PointModule):
 
         order = point.serialized_order[self.order_index][pad]
         inverse = unpad[point.serialized_inverse[self.order_index]]
+        #===========================================================
+        # todo
+        # تزریق SPE قبل از qkv
+        # هر attention block می‌تواند SPE مستقل داشته باشد
+        # if self.spe is not None:
+        #     point.feat = self.spe(point.feat, point.serialized_order[self.order_index])
 
         # padding and reshape feat and batch for serialized point patch
         qkv = self.qkv(point.feat)[order]
@@ -573,6 +592,9 @@ class PointTransformerV3(PointModule):
         #==================================================
         enable_gct: bool = False,      
         gct_num_anchors: int = 4,
+
+        enable_spe=False,  # ✅ پارامتر جدید
+        spe_dim=32,
     ):
         super().__init__()
         self.num_stages = len(enc_depths)
@@ -624,6 +646,17 @@ class PointTransformerV3(PointModule):
             norm_layer=bn_layer,
             act_layer=act_layer,
         )
+        #=========================================
+        if enable_spe:
+            # به جای یک SPE، برای هر stage یک SPE بسازید
+            self.spe_modules = nn.ModuleList([
+                modules.SerializationPositionalEncoding(
+                    channels=enc_channels[s],
+                    hidden_dim=spe_dim
+                ) for s in range(len(enc_depths))
+            ])
+        else:
+            self.spe_modules = None
 
         # encoder
         enc_drop_path = [
@@ -646,6 +679,15 @@ class PointTransformerV3(PointModule):
                     ),
                     name="down",
                 )
+            #===============================================
+            # todo
+            # 🔥 اضافه کردن SPE wrapper در ابتدای هر stage
+            # if enable_spe:
+            #     enc.add(
+            #         modules.SPEStageWrapper(self.spe_modules[s], stage_idx=s),
+            #         name=f"spe_stage{s}"
+            #     )
+
             for i in range(enc_depths[s]):
                 enc.add(
                     Block(
@@ -724,6 +766,14 @@ class PointTransformerV3(PointModule):
                         name=f"block{i}",
                     )
                 self.dec.add(module=dec, name=f"dec{s}")
+        #=================================================
+        self.enable_spe = enable_spe
+        # ✅ ساخت ماژول SPE
+        if self.enable_spe:
+            self.spe = modules.SerializationPositionalEncoding(
+                channels=enc_channels[0],  # 32
+                hidden_dim=spe_dim
+            )
 
     def forward(self, data_dict):
         point = Point(data_dict)
@@ -731,6 +781,22 @@ class PointTransformerV3(PointModule):
         point.sparsify()
 
         point = self.embedding(point)
+        #========================================
+        # SPE فقط یکبار قبل از encoder اعمال می‌شود
+        # در decoder و attention blocks بعدی تکرار نمی‌شود
+        # اگر shuffle_orders فعال باشد، ترتیب در هر block تغییر می‌کند ولی SPE ثابت می‌ماند
+        if self.enable_spe:
+            # point.serialized_order is populated by point.serialization()
+            if hasattr(point, 'serialized_order') and len(point.serialized_order) > 0:
+                # استفاده از اولین order (z-order)
+                serialized_order = point.serialized_order[0]
+                #point.feat = self.spe(point.feat, serialized_order)
+            else:
+                # Fallback if no order is found
+                serialized_order = torch.arange(point.feat.shape[0], device=point.feat.device)
+                #point.feat = self.spe(serialized_order, point.feat)
+            point.feat = self.spe(point.feat, serialized_order)
+
         point = self.enc(point)
         if not self.enc_mode:
             point = self.dec(point)

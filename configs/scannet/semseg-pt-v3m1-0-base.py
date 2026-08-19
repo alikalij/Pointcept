@@ -47,6 +47,9 @@ model = dict(
         #==========================================================
         enable_gct=False,         # برای تست Base (بدون ماژول) این را False کنید
         gct_num_anchors=4,       # تنظیم تعداد لنگرهای معنایی (تست مقادیر 2, 4, 8)
+
+        enable_spe=True,     # فعال کردن ماژول SPE
+        spe_dim=32,          # ابعاد لایه پنهان در MLP
     ),
     criteria=[
         dict(type="CrossEntropyLoss", loss_weight=1.0, ignore_index=-1),
