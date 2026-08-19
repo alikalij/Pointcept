@@ -67,7 +67,6 @@ class SerializedAttention(PointModule):
         #===================================
         enable_spe=False, 
         spe_dim=None,
-
     ):
         super().__init__()
         assert channels % num_heads == 0
@@ -493,6 +492,8 @@ class SerializedUnpooling(PointModule):
         norm_layer=None,
         act_layer=None,
         traceable=False,  # record parent and cluster
+        #===========================================
+        enable_gfe=False,
     ):
         super().__init__()
         self.proj = PointSequential(nn.Linear(in_channels, out_channels))
@@ -507,6 +508,11 @@ class SerializedUnpooling(PointModule):
             self.proj_skip.add(act_layer())
 
         self.traceable = traceable
+        #==================================
+        self.enable_gfe = enable_gfe
+
+        if self.enable_gfe:
+            self.gfe = modules.GeometricFeatureEnhancement(channels=out_channels)
 
     def forward(self, point):
         assert "pooling_parent" in point.keys()
@@ -515,6 +521,15 @@ class SerializedUnpooling(PointModule):
         inverse = point.pop("pooling_inverse")
         point = self.proj(point)
         parent = self.proj_skip(parent)
+        
+        #================================================
+        # Upsample decoder features to encoder resolution
+        decoder_feat_upsampled = point.feat[inverse]
+
+        # --- اعمال GFE (غنی‌سازی هندسی) ---
+        if self.enable_gfe:
+            parent.feat = self.gfe(parent.feat, decoder_feat_upsampled)
+
         parent.feat = parent.feat + point.feat[inverse]
 
         if self.traceable:
@@ -595,6 +610,8 @@ class PointTransformerV3(PointModule):
 
         enable_spe=False,  # ✅ پارامتر جدید
         spe_dim=32,
+
+        enable_gfe=False,
     ):
         super().__init__()
         self.num_stages = len(enc_depths)
@@ -738,6 +755,7 @@ class PointTransformerV3(PointModule):
                         out_channels=dec_channels[s],
                         norm_layer=bn_layer,
                         act_layer=act_layer,
+                        enable_gfe=enable_gfe,
                     ),
                     name="up",
                 )
