@@ -276,6 +276,9 @@ class Block(PointModule):
         enable_flash=True,
         upcast_attention=True,
         upcast_softmax=True,
+        #==================================
+        enable_gct=False,  
+        gct_num_anchors: int = 4,
     ):
         super().__init__()
         self.channels = channels
@@ -321,6 +324,13 @@ class Block(PointModule):
         self.drop_path = PointSequential(
             DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
         )
+        #============================================
+        self.enable_gct = enable_gct
+        if self.enable_gct:
+            self.gct = modules.GlobalContextToken(
+                channels=channels, 
+                num_anchors=gct_num_anchors
+            )
 
     def forward(self, point: Point):
         shortcut = point.feat
@@ -330,6 +340,10 @@ class Block(PointModule):
         if self.pre_norm:
             point = self.norm1(point)
         point = self.drop_path(self.attn(point))
+        #====================================
+        if self.enable_gct:
+            point = self.gct(point)
+
         point.feat = shortcut + point.feat
         if not self.pre_norm:
             point = self.norm1(point)
@@ -556,12 +570,17 @@ class PointTransformerV3(PointModule):
         pdnorm_adaptive=False,
         pdnorm_affine=True,
         pdnorm_conditions=("ScanNet", "S3DIS", "Structured3D"),
+        #==================================================
+        enable_gct: bool = False,      
+        gct_num_anchors: int = 4,
     ):
         super().__init__()
         self.num_stages = len(enc_depths)
         self.order = [order] if isinstance(order, str) else order
         self.enc_mode = enc_mode
         self.shuffle_orders = shuffle_orders
+        #=======================================
+        self.enable_gct = enable_gct
 
         assert self.num_stages == len(stride) + 1
         assert self.num_stages == len(enc_depths)
@@ -648,6 +667,9 @@ class PointTransformerV3(PointModule):
                         enable_flash=enable_flash,
                         upcast_attention=upcast_attention,
                         upcast_softmax=upcast_softmax,
+                        #=======================================
+                        enable_gct=enable_gct,           
+                        gct_num_anchors=gct_num_anchors
                     ),
                     name=f"block{i}",
                 )
