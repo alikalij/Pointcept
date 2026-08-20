@@ -493,7 +493,10 @@ class SerializedUnpooling(PointModule):
         act_layer=None,
         traceable=False,  # record parent and cluster
         #===========================================
+        enable_msfp=False,       # ablation: multi-scale feature propagation
+        msfp_dropout=0.0,
         enable_gfe=False,
+        enable_gsc=False,
     ):
         super().__init__()
         self.proj = PointSequential(nn.Linear(in_channels, out_channels))
@@ -509,10 +512,23 @@ class SerializedUnpooling(PointModule):
 
         self.traceable = traceable
         #==================================
+        self.enable_msfp = enable_msfp
         self.enable_gfe = enable_gfe
+        self.enable_gsc = enable_gsc
 
+        # MSFP: قبل از skip fusion اجرا می‌شود
+        if self.enable_msfp:
+            self.msfp = modules.MSFPFusion(channels=out_channels,dropout=msfp_dropout)
         if self.enable_gfe:
             self.gfe = modules.GeometricFeatureEnhancement(channels=out_channels)
+
+        # GSC operates on projected features → both are out_channels
+        if self.enable_gsc:
+            self.gsc = modules.GatedSkipConnectionCL(enc_channels=out_channels, dec_channels=out_channels)
+
+        # ✅ راه‌اندازی GSC با کانال‌های خروجی (زیرا proj و proj_skip قبلا ابعاد را همسان کرده‌اند)
+        #if self.enable_gsc:
+        #    self.gsc = modules.GatedSkipConnectionGE(encoder_channels=out_channels, decoder_channels=out_channels)
 
     def forward(self, point):
         assert "pooling_parent" in point.keys()
@@ -523,14 +539,21 @@ class SerializedUnpooling(PointModule):
         parent = self.proj_skip(parent)
         
         #================================================
-        # Upsample decoder features to encoder resolution
-        decoder_feat_upsampled = point.feat[inverse]
+        skip_feat = parent.feat
+        decoder_feat = point.feat[inverse]
+        
+        if self.enable_msfp:
+            decoder_feat = self.msfp(skip_feat, decoder_feat)
 
-        # --- اعمال GFE (غنی‌سازی هندسی) ---
         if self.enable_gfe:
-            parent.feat = self.gfe(parent.feat, decoder_feat_upsampled)
+            skip_feat = self.gfe(skip_feat, decoder_feat)
 
-        parent.feat = parent.feat + point.feat[inverse]
+        if self.enable_gsc:
+            fused_feat = self.gsc(skip_feat, decoder_feat)
+        else:
+            fused_feat = skip_feat + decoder_feat
+
+        parent.feat = fused_feat
 
         if self.traceable:
             parent["unpooling_parent"] = point
@@ -611,7 +634,10 @@ class PointTransformerV3(PointModule):
         enable_spe=False,  # ✅ پارامتر جدید
         spe_dim=32,
 
+        enable_msfp=False,       
+        msfp_dropout=0.0,
         enable_gfe=False,
+        enable_gsc=False,
     ):
         super().__init__()
         self.num_stages = len(enc_depths)
@@ -755,7 +781,10 @@ class PointTransformerV3(PointModule):
                         out_channels=dec_channels[s],
                         norm_layer=bn_layer,
                         act_layer=act_layer,
+                        enable_msfp=enable_msfp,    
+                        msfp_dropout=msfp_dropout,
                         enable_gfe=enable_gfe,
+                        enable_gsc=enable_gsc,
                     ),
                     name="up",
                 )

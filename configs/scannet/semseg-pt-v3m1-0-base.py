@@ -51,7 +51,9 @@ model = dict(
         enable_spe=True,     # فعال کردن ماژول SPE
         spe_dim=32,          # ابعاد لایه پنهان در MLP
 
+        enable_msfp = False,
         enable_gfe = False,
+        enable_gsc=False,
     ),
     criteria=[
         dict(type="CrossEntropyLoss", loss_weight=1.0, ignore_index=-1),
