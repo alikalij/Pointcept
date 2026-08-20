@@ -58,6 +58,7 @@ model = dict(
     criteria=[
         dict(type="CrossEntropyLoss", loss_weight=1.0, ignore_index=-1),
         dict(type="LovaszLoss", mode="multiclass", loss_weight=1.0, ignore_index=-1),
+        dict(type='BoundaryAwareLoss', k=16, boundary_weight=2.0, ignore_index=-1, loss_weight=1.0, enable_bal=True), 
     ],
 )
 

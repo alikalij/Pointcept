@@ -221,3 +221,86 @@ class DiceLoss(nn.Module):
                 total_loss += dice_loss
         loss = total_loss / num_classes
         return self.loss_weight * loss
+
+
+@LOSSES.register_module()
+class BoundaryAwareLoss(nn.Module):
+    """
+    Boundary-Aware Cross-Entropy Loss for 3D Point Cloud Segmentation.
+    
+    This loss precisely identifies boundary points on-the-fly using highly 
+    optimized CUDA operations (pointops) and re-weights their cross-entropy penalty.
+    
+    A point is defined as a boundary if it has at least one valid k-nearest 
+    neighbor belonging to a different valid semantic class.
+    
+    Formula:
+        L = Mean(w_i * CE_i) 
+        where w_i = \lambda if point i is a boundary, else 1.0
+    """
+    
+    def __init__(
+        self,
+        k=8,                  # تعداد همسایه‌ها (K-NN)
+        boundary_weight=2.0,  # وزن مرزها (λ)
+        ignore_index=-1,
+        loss_weight=1.0,
+        enable_bal=True
+    ):
+        super(BoundaryAwareLoss, self).__init__()
+        self.k = k
+        self.boundary_weight = boundary_weight
+        self.ignore_index = ignore_index
+        self.loss_weight = loss_weight
+        self.enable_bal = enable_bal
+        
+        # محاسبه Loss به صورت نقطه به نقطه (reduction='none')
+        self.ce = nn.CrossEntropyLoss(reduction="none", ignore_index=ignore_index)
+
+    @torch.no_grad()
+    def compute_boundary_mask(self, target, coord, offset):
+        import pointops
+        
+        if target.numel() == 0 or not (target != self.ignore_index).any():
+            return torch.ones_like(target, dtype=torch.float32, device=target.device)
+
+        coord_f32 = coord.to(torch.float32)
+        offset_i32 = offset.to(torch.float32) # اصلاح مهندسی نوع داده به int32
+
+        # محاسبه KNN با کارایی بالا در CUDA
+        idx, _ = pointops.knn_query(self.k, coord_f32, coord_f32, offset_i32, offset_i32)
+        idx = idx.long()
+        
+        center_labels = target.unsqueeze(1)    # (N, 1)
+        neighbor_labels = target[idx]          # (N, K)
+        
+        valid_mask = (neighbor_labels != self.ignore_index) & (center_labels != self.ignore_index)
+        diff_labels = (neighbor_labels != center_labels) & valid_mask
+        
+        # محاسبه نسبت همسایه‌های ناهمگون (Soft Weighting)
+        ratio_diff = diff_labels.sum(dim=1).float() / self.k
+        
+        # وزن‌دهی پیوسته بین 1.0 تا boundary_weight
+        weights = 1.0 + ratio_diff * (self.boundary_weight - 1.0)
+        return weights
+
+    def forward(self, pred, target, input_dict):
+        valid_mask = target != self.ignore_index
+        if not valid_mask.any():
+            return pred.sum() * 0.0
+        
+        ce_loss = self.ce(pred, target)  # (N,)
+        
+        if self.enable_bal and input_dict is not None and "coord" in input_dict and "offset" in input_dict:
+            coord = input_dict["coord"]
+            offset = input_dict["offset"]
+            boundary_weights = self.compute_boundary_mask(target, coord, offset)
+            
+            # میانگین وزنی نرمالایز شده برای ثبات آموزش
+            loss_to_mean = ce_loss * boundary_weights
+            epsilon = 1e-8
+            final_loss = loss_to_mean[valid_mask].sum() / (boundary_weights[valid_mask].sum() + epsilon)
+        else:
+            final_loss = ce_loss[valid_mask].mean()
+            
+        return final_loss * self.loss_weight
