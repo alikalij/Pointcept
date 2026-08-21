@@ -67,6 +67,7 @@ class SerializedAttention(PointModule):
         #===================================
         enable_spe=False, 
         spe_dim=None,
+        spe_num_freqs=4,
     ):
         super().__init__()
         assert channels % num_heads == 0
@@ -103,7 +104,8 @@ class SerializedAttention(PointModule):
         if enable_spe:
             self.spe = modules.SerializationPositionalEncoding(
                 channels=spe_dim,
-                hidden_dim=spe_dim
+                hidden_dim=spe_dim,
+                num_freqs=spe_num_freqs
             )
         else:
             self.spe = None
@@ -494,9 +496,14 @@ class SerializedUnpooling(PointModule):
         traceable=False,  # record parent and cluster
         #===========================================
         enable_msfp=False,       # ablation: multi-scale feature propagation
+        msfp_hidden_ratio=0.5,
         msfp_dropout=0.0,
+
         enable_gfe=False,
+        gfe_reduction=4,
+
         enable_gsc=False,
+        gsc_dim=16,
     ):
         super().__init__()
         self.proj = PointSequential(nn.Linear(in_channels, out_channels))
@@ -518,17 +525,25 @@ class SerializedUnpooling(PointModule):
 
         # MSFP: قبل از skip fusion اجرا می‌شود
         if self.enable_msfp:
-            self.msfp = modules.MSFPFusion(channels=out_channels,dropout=msfp_dropout)
+            self.msfp = modules.MSFPFusion(
+                channels=out_channels,
+                hidden_ratio=msfp_hidden_ratio,
+                dropout=msfp_dropout)
         if self.enable_gfe:
-            self.gfe = modules.GeometricFeatureEnhancement(channels=out_channels)
+            self.gfe = modules.GeometricFeatureEnhancement(
+                channels=out_channels,
+                reduction=gfe_reduction)
 
         # GSC operates on projected features → both are out_channels
         if self.enable_gsc:
-            self.gsc = modules.GatedSkipConnectionCL(enc_channels=out_channels, dec_channels=out_channels)
+            self.gsc = modules.GatedSkipConnectionCL(
+                enc_channels=out_channels, 
+                dec_channels=out_channels,
+                hidden_dim=gsc_dim)
 
         # ✅ راه‌اندازی GSC با کانال‌های خروجی (زیرا proj و proj_skip قبلا ابعاد را همسان کرده‌اند)
         #if self.enable_gsc:
-        #    self.gsc = modules.GatedSkipConnectionGE(encoder_channels=out_channels, decoder_channels=out_channels)
+        #    self.gsc = modules.GatedSkipConnectionGE(encoder_channels=out_channels, decoder_channels=out_channels,hidden_dim=gsc_dim)
 
     def forward(self, point):
         assert "pooling_parent" in point.keys()
@@ -633,11 +648,17 @@ class PointTransformerV3(PointModule):
 
         enable_spe=False,  # ✅ پارامتر جدید
         spe_dim=32,
+        spe_num_freqs=4,
 
         enable_msfp=False,       
+        msfp_hidden_ratio=0.5,
         msfp_dropout=0.0,
+
         enable_gfe=False,
+        gfe_reduction=4,
+
         enable_gsc=False,
+        gsc_dim=16,     
     ):
         super().__init__()
         self.num_stages = len(enc_depths)
@@ -695,7 +716,8 @@ class PointTransformerV3(PointModule):
             self.spe_modules = nn.ModuleList([
                 modules.SerializationPositionalEncoding(
                     channels=enc_channels[s],
-                    hidden_dim=spe_dim
+                    hidden_dim=spe_dim,
+                    num_freqs=spe_num_freqs
                 ) for s in range(len(enc_depths))
             ])
         else:
@@ -781,10 +803,15 @@ class PointTransformerV3(PointModule):
                         out_channels=dec_channels[s],
                         norm_layer=bn_layer,
                         act_layer=act_layer,
-                        enable_msfp=enable_msfp,    
+                        enable_msfp=enable_msfp,  
+                        msfp_hidden_ratio=msfp_hidden_ratio,
                         msfp_dropout=msfp_dropout,
+                        
                         enable_gfe=enable_gfe,
+                        gfe_reduction=gfe_reduction,
+
                         enable_gsc=enable_gsc,
+                        gsc_dim=gsc_dim,
                     ),
                     name="up",
                 )
@@ -819,7 +846,8 @@ class PointTransformerV3(PointModule):
         if self.enable_spe:
             self.spe = modules.SerializationPositionalEncoding(
                 channels=enc_channels[0],  # 32
-                hidden_dim=spe_dim
+                hidden_dim=spe_dim,
+                num_freqs=spe_num_freqs,
             )
 
     def forward(self, data_dict):
