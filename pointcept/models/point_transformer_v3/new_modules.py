@@ -453,7 +453,7 @@ class GeometricFeatureEnhancement(nn.Module):
 
 
 # ============================================================
-# MSFP: Multi-Scale Feature Propagation Fusion
+# MSFP: Multi-ScaleFeaturePropagationFusion
 # ============================================================
 class MSFPFusion(nn.Module):
     """

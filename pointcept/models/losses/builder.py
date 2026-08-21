@@ -29,11 +29,8 @@ class Criteria(object):
             # loss computation occur in model
             return pred
         loss = 0
-        for c in self.criteria:
-            sig = inspect.signature(c.forward)
-        
-            accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
-            if 'input_dict' in sig.parameters or accepts_kwargs:
+        for c, accepts in zip(self.criteria, self.accepts_dict):
+            if accepts:
                 loss += c(pred, target, **kwargs)
             else:
                 loss += c(pred, target)
