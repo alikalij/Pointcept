@@ -49,15 +49,16 @@ model = dict(
         gct_num_anchors=4,       # تنظیم تعداد لنگرهای معنایی (تست مقادیر 2, 4, 8)
 
         enable_spe=True,     # فعال کردن ماژول SPE
-        spe_dim=32,          # ابعاد لایه پنهان در MLP
-        spe_num_freqs=4,
+        spe_dim=64,          # ابعاد لایه پنهان در MLP
+        spe_num_freqs=8,
+        spe_gain=0.01,
 
         enable_msfp = False,
-        msfp_hidden_ratio=0.5,
+        msfp_hidden_ratio=0.25,
         msfp_dropout=0.1,         # پیشنهاد برای جلوگیری از بیش‌برازش
         
         enable_gfe = False,
-        gfe_reduction=4,
+        gfe_reduction=8, # 2 هم امتحان شود
         
         enable_gsc=False,   
         gsc_dim=16,     
