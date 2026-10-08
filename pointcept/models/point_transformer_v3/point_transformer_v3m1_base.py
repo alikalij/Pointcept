@@ -862,15 +862,14 @@ class PointTransformerV3(PointModule):
         # اگر shuffle_orders فعال باشد، ترتیب در هر block تغییر می‌کند ولی SPE ثابت می‌ماند
         if self.enable_spe:
             # point.serialized_order is populated by point.serialization()
-            if hasattr(point, 'serialized_order') and len(point.serialized_order) > 0:
+            if hasattr(point, 'serialized_inverse') and len(point.serialized_inverse) > 0:
                 # استفاده از اولین order (z-order)
-                serialized_order = point.serialized_order[0]
-                #point.feat = self.spe(point.feat, serialized_order)
+                rank = point.serialized_inverse[0].float() / max(1, point.feat.shape[0] - 1)
             else:
                 # Fallback if no order is found
-                serialized_order = torch.arange(point.feat.shape[0], device=point.feat.device)
-                #point.feat = self.spe(serialized_order, point.feat)
-            point.feat = self.spe(point.feat, serialized_order)
+                rank = torch.arange(point.feat.shape[0], device=point.feat.device).float()
+            normalized_rank = rank / max(1, point.feat.shape[0] - 1)
+            point.feat = self.spe(point.feat, normalized_rank)
 
         point = self.enc(point)
         if not self.enc_mode:
